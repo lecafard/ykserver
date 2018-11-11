@@ -38,15 +38,14 @@ func PostVerify(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 	r.ParseForm()
 	otp := r.Form.Get("otp")
 
-	tid, ctr, err := VerifyOTP(otp)
+	tid, ctr, nonce, err := VerifyOTP(otp)
 
 	if err != nil {
 		if tid != "" {
 			w.WriteHeader(http.StatusForbidden)
 			fmt.Fprintf(w,
-				"{\"error\":\"%s\",\"status\":false,\"tid\":\"%s\",\"ctr\":%d}",
-				err.Error(), tid, ctr,
-			)
+				"{\"error\":\"%s\",\"status\":false,\"tid\":\"%s\",\"ctr\":%d,\"nonce\":\"%x\"}",
+				err.Error(), tid, ctr, nonce)
 			return
 		} else {
 			w.WriteHeader(http.StatusBadRequest)
@@ -56,7 +55,9 @@ func PostVerify(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 	}
 
 	w.WriteHeader(http.StatusOK)
-	fmt.Fprintf(w, "{\"status\":true,\"tid\":\"%s\",\"ctr\":%d}", tid, ctr)
+	fmt.Fprintf(w,
+		"{\"status\":true,\"tid\":\"%s\",\"ctr\":%d,\"nonce\":\"%x\"}",
+		tid, ctr, nonce)
 
 	/*
 		if len(otp) != 44 {

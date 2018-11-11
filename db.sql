@@ -1,6 +1,6 @@
 CREATE TABLE admin_users (
     uname     VARCHAR(20) UNIQUE PRIMARY KEY,
-    tid       CHAR(12)
+    tid       BLOB(6)
 );
 
 CREATE TABLE admin_logs (
@@ -9,16 +9,15 @@ CREATE TABLE admin_logs (
 );
 
 CREATE TABLE otp_tokens (
-    tid       CHAR(12) UNIQUE,
+    tid       BLOB(6) UNIQUE,
     pid       BLOB(6),
-    key       BLOB(16),
-    octr      INTEGER,
-    ctr       INTEGER
+    key       BLOB(16)
 );
 
 CREATE TABLE otp_logs (
-    tid       CHAR(12),
+    tid       BLOB(6),
     ts        INTEGER DEFAULT (strftime('%s', 'now')),
+    nonce     BLOB(2),
     ctr       INTEGER
 );
 

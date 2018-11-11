@@ -44,80 +44,87 @@ func FromModHex(data string) ([]byte, error) {
 	return arr, nil
 }
 
-func DecryptCTR(key []byte, priv []byte, payload []byte) (int, error) {
+func DecryptCTR(key []byte, priv []byte, payload []byte) (int, []byte, error) {
 	dec := make([]byte, 16)
 	cipher, err := aes.NewCipher(key)
 	if err != nil {
-		return -1, errors.New("AESError")
+		return -1, nil, errors.New("AESError")
 	}
 
 	cipher.Decrypt(dec, payload)
 	ctr := int(binary.LittleEndian.Uint16(dec[6:8]))
 	crcreq := uint64(binary.LittleEndian.Uint16(dec[14:16]))
+	nonce := dec[12:14]
 	privc := dec[0:6]
 
 	if bytes.Compare(privc, priv) != 0 {
-		return -1, errors.New("InvalidPrivID")
+		return -1, nil, errors.New("InvalidPrivID")
 	}
 
 	crccalc := crc.CalculateCRC(crc.X25, dec[0:14])
 	if crcreq != crccalc {
-		return -1, errors.New("InvalidCRC")
+		return -1, nil, errors.New("InvalidCRC")
 	}
 
-	return ctr, nil
+	return ctr, nonce, nil
 }
 
-func VerifyOTP(otp string) (string, int, error) {
+func VerifyOTP(otp string) (string, int, []byte, error) {
 	if len(otp) != 44 {
-		return "", -1, errors.New("InvalidOTP")
+		return "", -1, nil, errors.New("InvalidOTP")
 	}
 
 	// extract the first 12 characters (this is the id)
-	tid := otp[0:12]
+	tidS := otp[0:12]
 	pwd := otp[12:44]
 
 	// just checking
-	_, err := FromModHex(tid)
+	tid, err := FromModHex(tidS)
 	if err != nil {
-		return "", -1, errors.New("InvalidOTP")
+		return "", -1, nil, errors.New("InvalidOTP")
 	}
 
 	payload, err := FromModHex(pwd)
 	if err != nil {
-		return "", -1, err
+		return "", -1, nil, err
 	}
 
-	row := db.QueryRow("SELECT ctr,pid,key FROM otp_tokens WHERE tid=?", tid)
-	var ctr int
+	row := db.QueryRow("SELECT pid,key FROM otp_tokens WHERE tid=?", tid)
 	var pid, key []byte
 
-	err = row.Scan(&ctr, &pid, &key)
+	err = row.Scan(&pid, &key)
 
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return "", -1, errors.New("InvalidToken")
+			return "", -1, nil, errors.New("InvalidToken")
 		} else {
-			return "", -1, errors.New("DBError")
+			return "", -1, nil, errors.New("DBError")
 		}
 	}
 
 	// decrypt token and get counter
-	newCtr, err := DecryptCTR(key, pid, payload)
+	ctr, nonce, err := DecryptCTR(key, pid, payload)
 
 	if err != nil {
-		return "", -1, errors.New("InvalidOTP")
+		return "", -1, nil, errors.New("InvalidOTP")
 	}
 
-	if newCtr < ctr {
-		return tid, newCtr, errors.New("ReplayedOTP")
+	// now query ctr
+	row = db.QueryRow(
+		"SELECT 1 from otp_logs WHERE tid=? AND (ctr>? OR (ctr=? AND nonce=?))",
+		tid, ctr, ctr, nonce,
+	)
+	var disp int
+	err = row.Scan(&disp)
+	if err != nil && err != sql.ErrNoRows {
+		return "", -1, nil, errors.New("DBError")
+	} else if err == nil {
+		return tidS, ctr, nonce, errors.New("ReplayedOTP")
 	}
 
 	// log to db
-	stmt, _ := db.Prepare("INSERT INTO otp_logs (tid, ctr) VALUES(?, ?)")
-	stmt.Exec(tid, newCtr)
-	stmt, _ = db.Prepare("UPDATE otp_tokens SET ctr=? WHERE tid=?")
-	stmt.Exec(newCtr, tid)
+	stmt, _ := db.Prepare("INSERT INTO otp_logs (tid, nonce, ctr) VALUES(?, ?, ?)")
+	stmt.Exec(tid, nonce, ctr)
 
-	return tid, newCtr, nil
+	return tidS, ctr, nonce, nil
 }
